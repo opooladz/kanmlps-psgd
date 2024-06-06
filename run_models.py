@@ -5,6 +5,7 @@ import numpy as np
 import tqdm
 import torch.cuda as cuda
 import pickle
+from psgd import Newton,LRA,XMat
 
 torch.set_float32_matmul_precision('high')
 
@@ -63,7 +64,7 @@ for dataset_id in range(num_datasets):
     x_tensor, y_tensor, _ = generate_dataset(seed=dataset_id)
     for name, net in architectures.items():
         criterion = nn.MSELoss()
-        optimizer = optim.Adam(net.parameters(), lr=0.01)
+        optimizer = Newton(net.parameters(),preconditioner_update_probability=0.1,exact_hessian_vector_product=False)
 
         losses = []
         # Measure step times and memory usage
@@ -73,11 +74,11 @@ for dataset_id in range(num_datasets):
         with tqdm.tqdm(range(steps), desc=f"Training {name} on Dataset {dataset_id+1}") as pbar:
             for step in pbar:
                 net.train()
-                optimizer.zero_grad()
                 outputs = net(x_tensor)
                 loss = criterion(outputs, y_tensor)
-                loss.backward()
-                optimizer.step()
+                def closure():
+                    return loss
+                loss = optimizer.step(closure)
 
                 if step % interval == 0:
                     losses.append(loss.item())
