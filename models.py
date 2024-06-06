@@ -48,8 +48,8 @@ class ExpansionLayer(nn.Module):
         self._initialize_weights()
 
     def _initialize_weights(self):
-        nn.init.kaiming_uniform_(self.fc1.weight, nonlinearity='leaky_relu', mode='fan_in')
-        nn.init.kaiming_uniform_(self.fc2.weight, nonlinearity='leaky_relu', mode='fan_in')
+        nn.init.kaiming_uniform_(self.fc1.weight, nonlinearity='relu', mode='fan_in')
+        nn.init.kaiming_uniform_(self.fc2.weight, nonlinearity='relu', mode='fan_in')
 
     def forward(self, x):
         x = self.fc1(x) * self.scale
@@ -99,7 +99,7 @@ class LearnedActivation(nn.Module):
 
 
 class LearnedActivationMLP(nn.Module):
-    def __init__(self, d=100, k=3, func=soft_lrelu):
+    def __init__(self, d=100, k=3, func=torch.relu):
         super().__init__()
         self.seq = nn.Sequential(
             nn.Linear(1, d),
@@ -116,7 +116,7 @@ class LearnedActivationMLP(nn.Module):
 
 
 class KanLayer(nn.Module):
-    def __init__(self, din, dout, k, scale=.5, func=soft_lrelu):
+    def __init__(self, din, dout, k, scale=.5, func=torch.relu):
         super().__init__()
         self.k = k
         self.scale = scale
@@ -145,7 +145,7 @@ class KanLayer(nn.Module):
 
 
 class Kan(nn.Module):
-    def __init__(self, d=100, k=3, scale=1, func=soft_lrelu):
+    def __init__(self, d=100, k=3, scale=1, func=torch.relu):
         super().__init__()
         self.seq = nn.Sequential(
             KanLayer(1, d, k, scale, func),
@@ -159,7 +159,7 @@ class Kan(nn.Module):
 
 
 class RegluLayer(nn.Module):
-    def __init__(self, din, dout, func=soft_lrelu):
+    def __init__(self, din, dout, func=torch.relu):
         super().__init__()
         self.func = func
         self.fc1 = nn.Linear(din, dout)
@@ -170,7 +170,7 @@ class RegluLayer(nn.Module):
 
 
 class RegluMLP(nn.Module):
-    def __init__(self, d=100, func=soft_lrelu):
+    def __init__(self, d=100, func=torch.relu):
         super().__init__()
         self.seq = nn.Sequential(
             RegluLayer(1, d, func),
@@ -204,7 +204,7 @@ class RegluExpandMLP(nn.Module):
 
 
 class Mix2Layer(nn.Module):
-    def __init__(self, din, dout, k, func=soft_lrelu):
+    def __init__(self, din, dout, k, func=torch.relu):
         super().__init__()
         self.func = func
         self.k = k
@@ -231,7 +231,7 @@ class Mix2Layer(nn.Module):
 
 
 class Mix2MLP(nn.Module):
-    def __init__(self, d=100, k=3, func=soft_lrelu):
+    def __init__(self, d=100, k=3, func=torch.relu):
         super().__init__()
         self.seq = nn.Sequential(
             Mix2Layer(1, d, k, func),
