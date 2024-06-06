@@ -39,7 +39,7 @@ architectures = {
     "Learned Act": LearnedActivationMLP(d=100, k=3),
     # Params: 4d^2 + O(d)
     # "Gated Sine": RegluMLP(d=100, func=torch.sin),
-    "Reglu": RegluMLP(d=100, func=torch.gelu),
+    "Reglu": RegluMLP(d=100, func=torch.nn.GELU),
     # Params: 6kd^2 + O(dk)
     "KAN": Kan(d=100, k=3, scale=.5, func=torch.relu),
     # Params: 4kd^2 + O(dk)
