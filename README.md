@@ -1,3 +1,7 @@
+## Note:
+
+For now updating plot2.py 
+
 Requirements:
 ```bash
 $ pip install torch tqdm numpy matplotlib
