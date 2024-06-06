@@ -64,7 +64,7 @@ for dataset_id in range(num_datasets):
     x_tensor, y_tensor, _ = generate_dataset(seed=dataset_id)
     for name, net in architectures.items():
         criterion = nn.MSELoss()
-        optimizer = LRA(net.parameters(),,momentum=0.9,preconditioner_update_probability=0.1)
+        optimizer = LRA(net.parameters(),momentum=0.9,preconditioner_update_probability=0.1)
 
         losses = []
         # Measure step times and memory usage
