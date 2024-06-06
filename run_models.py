@@ -38,7 +38,7 @@ architectures = {
     # Params: 2d^2 + 6dk + O(d)
     "Learned Act": LearnedActivationMLP(d=100, k=3),
     # Params: 4d^2 + O(d)
-    "Gated Sine": RegluMLP(d=100, func=torch.sin),
+    # "Gated Sine": RegluMLP(d=100, func=torch.sin),
     "Reglu": RegluMLP(d=100, func=torch.relu),
     # Params: 6kd^2 + O(dk)
     "KAN": Kan(d=100, k=3, scale=.5, func=torch.relu),
@@ -67,7 +67,7 @@ for dataset_id in range(num_datasets):
         if "adam" in name:
             optimizer = optim.Adam(net.parameters(), lr=0.01)
         else:
-            optimizer = LRA(net.parameters(),lr_params=0.1,lr_preconditioner=0.1,momentum=0.9,rank_of_approximation=100,preconditioner_update_probability=0.1)
+            optimizer = LRA(net.parameters(),lr_params=0.1,lr_preconditioner=0.1,momentum=0.9,rank_of_approximation=100,preconditioner_update_probability=1)
 
         losses = []
         # Measure step times and memory usage
