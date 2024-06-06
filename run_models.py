@@ -67,7 +67,7 @@ for dataset_id in range(num_datasets):
         if "adam" in name:
             optimizer = optim.Adam(net.parameters(), lr=0.01)
         else:
-            optimizer = LRA(net.parameters(),lr_params=0.1,lr_preconditioner=0.25,momentum=0.9,preconditioner_update_probability=0.5)
+            optimizer = LRA(net.parameters(),lr_params=0.1,lr_preconditioner=0.25,momentum=0.9,preconditioner_update_probability=0.1)
 
         losses = []
         # Measure step times and memory usage
