@@ -49,7 +49,7 @@ architectures = {
     name: net.cuda()
     for name, net in architectures.items()
 } | {
-    name + "_compiled": net.cuda()
+    name + "_adam": net.cuda()
     for name, net in architectures.items()
 }
 
@@ -64,7 +64,10 @@ for dataset_id in range(num_datasets):
     x_tensor, y_tensor, _ = generate_dataset(seed=dataset_id)
     for name, net in architectures.items():
         criterion = nn.MSELoss()
-        optimizer = LRA(net.parameters(),momentum=0.9,preconditioner_update_probability=0.1)
+        if "adam" in name:
+            optimizer = optim.Adam(net.parameters(), lr=0.01)
+        else:
+            optimizer = LRA(net.parameters(),lr_params=0.1,lr_preconditioner=0.25,momentum=0.9,preconditioner_update_probability=1)
 
         losses = []
         # Measure step times and memory usage
@@ -76,8 +79,13 @@ for dataset_id in range(num_datasets):
                 net.train()
                 outputs = net(x_tensor)
                 loss = criterion(outputs, y_tensor)
-                def closure():
-                    return loss
+                if "adam" in name:
+                    def closure():
+                        loss.backward()
+                        return loss                
+                else:
+                    def closure():
+                        return loss
                 loss = optimizer.step(closure)
 
                 if step % interval == 0:
