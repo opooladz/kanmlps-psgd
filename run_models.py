@@ -47,7 +47,7 @@ architectures = {
     # Params: 2d^2 + 6dk + O(d)
     "Learned Act": LearnedActivationMLP(d=100, k=3),
     # Params: 4d^2 + O(d)
-    # "Gated Sine": RegluMLP(d=100, func=torch.sin),
+    # "Gated Sine": RegluMLP(d=100, func=torch.sin), # was giving me trouble (diverging) omit for now
     "Reglu": RegluMLP(d=100, func=soft_lrelu),
     # Params: 6kd^2 + O(dk)
     "KAN": Kan(d=100, k=3, scale=.5, func=soft_lrelu),
@@ -67,6 +67,7 @@ loss_history = {name: [] for name in architectures.keys()}
 step_times = {name: [] for name in architectures.keys()}
 memory_usage = {name: [] for name in architectures.keys()}
 
+# odly enough they need different lrs (not typical of PSGD)
 lr0s = {"Simple": 0.2,
         "Expanding": 0.1,
         "Learned Act": 0.15,
@@ -74,11 +75,13 @@ lr0s = {"Simple": 0.2,
         "KAN": 0.05,
         "MoE": 0.05,        
         }
+
+# clipping set to 100 just makes sure there is no crazy explosion of grads
 clipping = {"Simple":100,
         "Expanding": 100,
         "Learned Act": 100,
         "Reglu": 100,
-        "KAN": 1,
+        "KAN": 1, # sometimes kan diverges so be strict on the gradient clipping
         "MoE": 100,        
         }
 # Training loop for each architecture on each dataset
@@ -90,6 +93,7 @@ for dataset_id in range(num_datasets):
         if "adam" in name:
             optimizer = optim.Adam(net.parameters(), lr=0.01)
         else:
+            # can reduce rank of approx to 10 and precond update to 0.1 but will need to clip more probs/reduce lr. 
             optimizer = LRA(net.parameters(),lr_params=lr0s[name],lr_preconditioner=0.05,grad_clip_max_norm=clipping[name],momentum=0.9,rank_of_approximation=100,preconditioner_update_probability=1)
             # optimizer = XMat(net.parameters(),lr_params=lr0s[name],lr_preconditioner=0.05,momentum=0.9,grad_clip_max_norm=100,preconditioner_update_probability=1)
 
