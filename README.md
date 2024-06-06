@@ -1,6 +1,9 @@
 ## Note:
 
-For now updating plot2.py 
+Seems like under my experiments Expand is doing the best. Seems KAN is actually doing the worst with PSGD sometimes
+
+
+![alt text](https://github.com/opooladz/kanmlps-psgd/blob/main/loss_comparison_with_variance_smooth.png)
 
 Requirements:
 ```bash
