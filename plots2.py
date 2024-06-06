@@ -128,7 +128,10 @@ for dataset_id in range(num_datasets):
                 pbar.set_postfix({"loss": loss.item()})
                 if not "adam" in name:
                   optimizer.lr_params *= (0.8) ** (1 / (steps-1))
-                  optimizer.lr_preconditioner *= (0.8) ** (1 / (steps-1))                
+                  optimizer.lr_preconditioner *= (0.8) ** (1 / (steps-1))
+                else:
+                  for param_group in optimizer.param_groups:
+                      param_group['lr'] *= (0.8) ** (1 / (steps - 1))
         end_time.record()
         cuda.synchronize()
         step_times[name].append(start_time.elapsed_time(end_time) / steps)
@@ -143,14 +146,29 @@ std_step_times = {name: np.std(times) for name, times in step_times.items()}
 mean_memory_usage = {name: np.mean(memory) for name, memory in memory_usage.items()}
 std_memory_usage = {name: np.std(memory) for name, memory in memory_usage.items()}
 
+data_to_save = {
+    'mean_losses': mean_losses,
+    'std_losses': std_losses,
+    'mean_step_times': mean_step_times,
+    'std_step_times': std_step_times,
+    'mean_memory_usage': mean_memory_usage,
+    'std_memory_usage': std_memory_usage
+}
+
+# Save the data to a .npz file
+np.savez('data.npz', **data_to_save)
 
 # Plotting the loss history with fill_between
-fig, ax = plt.subplots()
+fig, ax = plt.subplots(figsize=(12, 8))  # Increase the width and height as needed
 x_values = range(0, steps, interval)
 for name in architectures.keys():
     mean = mean_losses[name]
     std = std_losses[name]
-    ax.plot(x_values, mean, label=name)
+    if 'adam' in name.lower():
+        linestyle = '--'  # Dotted line
+    else:
+        linestyle = '-'  # Solid line
+    ax.plot(x_values, mean, label=name, linestyle=linestyle)
     ax.fill_between(x_values, mean - std, mean + std, alpha=0.3)
 
 # Generate the first dataset to compute Epistemic loss
@@ -166,7 +184,8 @@ ax.set_ylim(lower_bound, upper_bound)
 
 ax.set_xlabel('Steps')
 ax.set_ylabel('Loss')
-ax.legend()
+# Place the legend outside the plot area
+ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
 ax.set_title('Loss after x steps')
 ax.set_facecolor("black")
 fig.patch.set_facecolor("black")
@@ -179,7 +198,7 @@ ax.tick_params(axis="y", colors="white")
 ax.yaxis.label.set_color("white")
 ax.xaxis.label.set_color("white")
 ax.title.set_color("white")
-
+plt.tight_layout()
 # Save the plot to a file
 plt.savefig("loss_comparison_with_variance.png", facecolor=fig.get_facecolor(), dpi=300)
 print("Plot saved to loss_comparison_with_variance.png")
