@@ -5,14 +5,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 import tqdm
 import torch.cuda as cuda
+from psgd import Newton,LRA,XMat
 
 
 
 torch.set_float32_matmul_precision('high')
 
 # Training parameters
-steps = 500
-interval = 10  # Save the model output every `interval` epochs
+steps = 5000
+interval = 100  # Save the model output every `interval` epochs
 
 # Number of datasets to sample
 num_datasets = 2
@@ -37,63 +38,97 @@ print(f"Epistemic loss: {epistemic_loss:.4f}")
 # List of network architectures
 from models import SimpleNet, ExpansionMLP, LearnedActivationMLP, RegluMLP, Kan, RegluExpandMLP, Mix2MLP
 
+def soft_lrelu(x):
+    # Reducing to ReLU when a=0.5 and e=0
+    # Here, we set a-->0.5 from left and e-->0 from right,
+    # where adding eps is to make the derivatives have better rounding behavior around 0.
+    a = 0.49
+    e = torch.finfo(torch.float32).eps
+    return (1-a)*x + a*torch.sqrt(x*x + e*e) - a*e
+
 # All architectures are 2-hidden layer MLPs with (1, 100, 100, 1) units
 architectures = {
     # Params: 2d^2 + O(d)
     "Simple": SimpleNet(d=100),
     # Params: 4kd^2 + O(d)
-    "Expanding": ExpansionMLP(d=100, k=3),
+    "Expanding": ExpansionMLP(d=100, k=3, scale=1/8),
     # Params: 2d^2 + 6dk + O(d)
     "Learned Act": LearnedActivationMLP(d=100, k=3),
     # Params: 4d^2 + O(d)
-    "Gated Sine": RegluMLP(d=100, func=torch.sin),
-    "Reglu": RegluMLP(d=100, func=torch.relu),
+    # "Gated Sine": RegluMLP(d=100, func=torch.sin),
+    "Reglu": RegluMLP(d=100, func=soft_lrelu),
     # Params: 6kd^2 + O(dk)
-    "KAN": Kan(d=100, k=3, scale=.5, func=torch.relu),
+    "KAN": Kan(d=100, k=3, scale=.5, func=soft_lrelu),
     # Params: 4kd^2 + O(dk)
-    "MoE": Mix2MLP(d=100, k=3, func=torch.relu),
+    "MoE": Mix2MLP(d=100, k=3, func=soft_lrelu),
 }
 architectures = {
     name: net.cuda()
     for name, net in architectures.items()
 } | {
-    name + "_compiled": torch.compile(net.cuda())
+    name + "_adam": net.cuda()
     for name, net in architectures.items()
 }
 
-
-# Dictionary to store loss history
-# Dictionary to store step times and memory usage
+# Dictionary to store loss history, step times, and memory usage
 loss_history = {name: [] for name in architectures.keys()}
 step_times = {name: [] for name in architectures.keys()}
 memory_usage = {name: [] for name in architectures.keys()}
 
-
+lr0s = {"Simple": 0.2,
+        "Expanding": 0.1,
+        "Learned Act": 0.15,
+        "Reglu": 0.01,
+        "KAN": 0.05,
+        "MoE": 0.05,        
+        }
+clipping = {"Simple":100,
+        "Expanding": 100,
+        "Learned Act": 100,
+        "Reglu": 100,
+        "KAN": 1,
+        "MoE": 100,        
+        }
 # Training loop for each architecture on each dataset
 for dataset_id in range(num_datasets):
     print(f"Training on Dataset {dataset_id+1}")
     x_tensor, y_tensor, _ = generate_dataset(seed=dataset_id)
     for name, net in architectures.items():
         criterion = nn.MSELoss()
-        optimizer = optim.Adam(net.parameters(), lr=0.01)
+        if "adam" in name:
+            optimizer = optim.Adam(net.parameters(), lr=0.01)
+        else:
+            optimizer = LRA(net.parameters(),lr_params=lr0s[name],lr_preconditioner=0.05,grad_clip_max_norm=clipping[name],momentum=0.9,rank_of_approximation=100,preconditioner_update_probability=1)
+            # optimizer = XMat(net.parameters(),lr_params=lr0s[name],lr_preconditioner=0.05,momentum=0.9,grad_clip_max_norm=100,preconditioner_update_probability=1)
 
         losses = []
-        # Measure step times and memory usage without compilation
+        # Measure step times and memory usage
         start_time = cuda.Event(enable_timing=True)
         end_time = cuda.Event(enable_timing=True)
         start_time.record()
         with tqdm.tqdm(range(steps), desc=f"Training {name} on Dataset {dataset_id+1}") as pbar:
             for step in pbar:
                 net.train()
-                optimizer.zero_grad()
-                outputs = net(x_tensor)
-                loss = criterion(outputs, y_tensor)
-                loss.backward()
-                optimizer.step()
+
+                if "adam" in name:
+                  optimizer.zero_grad()
+                  outputs = net(x_tensor)
+                  loss = criterion(outputs, y_tensor)
+                  loss.backward()
+                  optimizer.step()         
+                else:
+                    outputs = net(x_tensor)
+                    loss = criterion(outputs, y_tensor)                  
+                    def closure():
+                        return loss
+                    loss = optimizer.step(closure)
 
                 if step % interval == 0:
                     losses.append(loss.item())
                 pbar.set_postfix({"loss": loss.item()})
+                if not "adam" in name:
+                  optimizer.lr_params *= (0.8) ** (1 / (steps-1))
+                  optimizer.lr_preconditioner *= (0.8) ** (1 / (steps-1))                
         end_time.record()
         cuda.synchronize()
         step_times[name].append(start_time.elapsed_time(end_time) / steps)
@@ -150,39 +185,41 @@ plt.savefig("loss_comparison_with_variance.png", facecolor=fig.get_facecolor(), 
 print("Plot saved to loss_comparison_with_variance.png")
 # plt.show()
 
-# Plotting the step times with error bars
-fig, ax = plt.subplots(figsize=(10, 6))
-architectures_list = list(architectures.keys())
-x = np.arange(len(architectures_list))
-width = 0.35
+# # Plotting the step times with error bars
+# fig, ax = plt.subplots(figsize=(10, 6))
+# architectures_list = list(architectures.keys())
+# x = np.arange(len(architectures_list))
+# width = 0.35
 
-ax.bar(x - width/2, [mean_step_times[name] for name in architectures_list], width, yerr=[std_step_times[name] for name in architectures_list], label='Without Compilation')
-ax.bar(x + width/2, [mean_step_times[name] for name in architectures_list], width, yerr=[std_step_times[name] for name in architectures_list], label='With Compilation')
+# ax.bar(x - width/2, [mean_step_times[name] for name in architectures_list], width, yerr=[std_step_times[name] for name in architectures_list], label='PSGD')
+# ax.bar(x + width/2, [mean_step_times[name] for name in architectures_list], width, yerr=[std_step_times[name] for name in architectures_list], label='Adam')
 
-ax.set_xlabel('Architecture')
-ax.set_ylabel('Step Time (ms)')
-ax.set_title('Step Times for Different Architectures')
-ax.set_xticks(x)
-ax.set_xticklabels(architectures_list, rotation=45, ha='right')
-ax.legend()
+# ax.set_xlabel('Architecture')
+# ax.set_ylabel('Step Time (ms)')
+# ax.set_title('Step Times for Different Architectures')
+# ax.set_xticks(x)
+# ax.set_xticklabels(architectures_list, rotation=45, ha='right')
+# ax.legend()
 
-plt.tight_layout()
-plt.savefig("step_times_comparison.png", dpi=300)
-plt.close()
+# plt.tight_layout()
+# plt.savefig("step_times_comparison.png", dpi=300)
+# plt.close()
 
-# Plotting the memory usage with error bars
-fig, ax = plt.subplots(figsize=(10, 6))
+# # Plotting the memory usage with error bars
+# fig, ax = plt.subplots(figsize=(10, 6))
 
-ax.bar(x - width/2, [mean_memory_usage[name] for name in architectures_list], width, yerr=[std_memory_usage[name][0] for name in architectures_list if not name.endswith("_compiled")], label='Without Compilation')
-ax.bar(x + width/2, [mean_memory_usage[name][1] for name in architectures_list], width, yerr=[std_memory_usage[name][1] for name in architectures_list if name.endswith("_compiled")], label='With Compilation')
+# ax.bar(x - width/2, [mean_memory_usage[name] for name in architectures_list], width, yerr=[std_memory_usage[name] if not isinstance(std_memory_usage[name], (list, tuple)) else std_memory_usage[name][0] for name in architectures_list if not name.endswith("_adam")], label='Without Compilation')
+# ax.bar(x - width/2, [mean_memory_usage[name] for name in architectures_list], width, yerr=[std_memory_usage[name] if not isinstance(std_memory_usage[name], (list, tuple)) else std_memory_usage[name][0] for name in architectures_list if name.endswith("_adam")], label='With Compilation')
+# # ax.bar(x - width/2, [mean_memory_usage[name] for name in architectures_list], width, yerr=[std_memory_usage[name][0] for name in architectures_list if not name.endswith("_adam")], label='Without Compilation')
+# # ax.bar(x + width/2, [mean_memory_usage[name][1] for name in architectures_list], width, yerr=[std_memory_usage[name][1] for name in architectures_list if name.endswith("_adam")], label='With Compilation')
 
-ax.set_xlabel('Architecture')
-ax.set_ylabel('Memory Usage (MB)')
-ax.set_title('Memory Usage for Different Architectures')
-ax.set_xticks(x)
-ax.set_xticklabels(architectures_list, rotation=45, ha='right')
-ax.legend()
+# ax.set_xlabel('Architecture')
+# ax.set_ylabel('Memory Usage (MB)')
+# ax.set_title('Memory Usage for Different Architectures')
+# ax.set_xticks(x)
+# ax.set_xticklabels(architectures_list, rotation=45, ha='right')
+# ax.legend()
 
-plt.tight_layout()
-plt.savefig("memory_usage_comparison.png", dpi=300)
-plt.close()
+# plt.tight_layout()
+# plt.savefig("memory_usage_comparison.png", dpi=300)
+# plt.close()
