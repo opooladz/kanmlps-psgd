@@ -1,17 +1,34 @@
 import torch
 import torch.nn as nn
+def soft_lrelu(x):
+    # Reducing to ReLU when a=0.5 and e=0
+    # Here, we set a-->0.5 from left and e-->0 from right,
+    # where adding eps is to make the derivatives have better rounding behavior around 0.
+    a = 0.49
+    e = torch.finfo(torch.float32).eps
+    return (1-a)*x + a*torch.sqrt(x*x + e*e) - a*e
 
+import torch
+
+class SoftLReLU(torch.nn.Module):
+    def __init__(self):
+        super(SoftLReLU, self).__init__()
+        self.a = 0.49
+        self.e = torch.finfo(torch.float32).eps
+
+    def forward(self, x):
+        return (1 - self.a) * x + self.a * torch.sqrt(x * x + self.e * self.e) - self.a * self.e
 
 class SimpleNet(nn.Module):
     def __init__(self, d):
         super().__init__()
         self.seq = nn.Sequential(
             nn.Linear(1, d),
-            nn.ReLU(),
+            SoftLReLU(),
             nn.Linear(d, d),
-            nn.ReLU(),
+            SoftLReLU(),
             nn.Linear(d, d),
-            nn.ReLU(),
+            SoftLReLU(),
             nn.Linear(d, 1),
         )
 
@@ -36,9 +53,9 @@ class ExpansionLayer(nn.Module):
 
     def forward(self, x):
         x = self.fc1(x) * self.scale
-        x = torch.relu(x)
+        x = soft_lrelu(x)
         x = self.fc2(x)
-        x = torch.relu(x)
+        x = soft_lrelu(x)
         return x
 
 
@@ -172,13 +189,13 @@ class RegluExpandMLP(nn.Module):
         self.seq = nn.Sequential(
             RegluLayer(1, k * d),
             nn.Linear(k * d, d),
-            nn.ReLU(),
+            SoftLReLU(),
             RegluLayer(d, k * d),
             nn.Linear(k * d, d),
-            nn.ReLU(),
+            SoftLReLU(),
             RegluLayer(d, k * d),
             nn.Linear(k * d, d),
-            nn.ReLU(),
+            SoftLReLU(),
             nn.Linear(d, 1),
         )
 
