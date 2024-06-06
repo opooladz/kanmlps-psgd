@@ -29,6 +29,15 @@ def generate_dataset(seed):
 # List of network architectures
 from models import SimpleNet, ExpansionMLP, LearnedActivationMLP, RegluMLP, Kan, RegluExpandMLP, Mix2MLP
 
+# 2nd order differentiable activation 
+def soft_lrelu(x):
+    # Reducing to ReLU when a=0.5 and e=0
+    # Here, we set a-->0.5 from left and e-->0 from right,
+    # where adding eps is to make the derivatives have better rounding behavior around 0.
+    a = 0.49
+    e = torch.finfo(torch.float32).eps
+    return (1-a)*x + a*torch.sqrt(x*x + e*e) - a*e
+
 # All architectures are 2-hidden layer MLPs with (1, 100, 100, 1) units
 architectures = {
     # Params: 2d^2 + O(d)
@@ -39,11 +48,11 @@ architectures = {
     "Learned Act": LearnedActivationMLP(d=100, k=3),
     # Params: 4d^2 + O(d)
     # "Gated Sine": RegluMLP(d=100, func=torch.sin),
-    # "Reglu": RegluMLP(d=100, func=torch.nn.GELU),
+    "Reglu": RegluMLP(d=100, func=soft_lrelu),
     # Params: 6kd^2 + O(dk)
-    "KAN": Kan(d=100, k=3, scale=.5, func=torch.relu),
+    "KAN": Kan(d=100, k=3, scale=.5, func=soft_lrelu),
     # Params: 4kd^2 + O(dk)
-    "MoE": Mix2MLP(d=100, k=3, func=torch.relu),
+    "MoE": Mix2MLP(d=100, k=3, func=soft_lrelu),
 }
 architectures = {
     name: net.cuda()
@@ -58,6 +67,20 @@ loss_history = {name: [] for name in architectures.keys()}
 step_times = {name: [] for name in architectures.keys()}
 memory_usage = {name: [] for name in architectures.keys()}
 
+lr0s = {"Simple": 0.2,
+        "Expanding": 0.1,
+        "Learned Act": 0.15,
+        "Reglu": 0.01,
+        "KAN": 0.05,
+        "MoE": 0.05,        
+        }
+clipping = {"Simple":100,
+        "Expanding": 100,
+        "Learned Act": 100,
+        "Reglu": 100,
+        "KAN": 1,
+        "MoE": 100,        
+        }
 # Training loop for each architecture on each dataset
 for dataset_id in range(num_datasets):
     print(f"Training on Dataset {dataset_id+1}")
@@ -67,8 +90,8 @@ for dataset_id in range(num_datasets):
         if "adam" in name:
             optimizer = optim.Adam(net.parameters(), lr=0.01)
         else:
-            # optimizer = LRA(net.parameters(),lr_params=0.1,lr_preconditioner=0.1,momentum=0.9,rank_of_approximation=10,preconditioner_update_probability=0.1)
-            optimizer = XMat(net.parameters(),lr_params=0.1,lr_preconditioner=0.1,momentum=0.9,preconditioner_update_probability=0.1)
+            optimizer = LRA(net.parameters(),lr_params=lr0s[name],lr_preconditioner=0.05,grad_clip_max_norm=clipping[name],momentum=0.9,rank_of_approximation=100,preconditioner_update_probability=1)
+            # optimizer = XMat(net.parameters(),lr_params=lr0s[name],lr_preconditioner=0.05,momentum=0.9,grad_clip_max_norm=100,preconditioner_update_probability=1)
 
         losses = []
         # Measure step times and memory usage
@@ -78,25 +101,32 @@ for dataset_id in range(num_datasets):
         with tqdm.tqdm(range(steps), desc=f"Training {name} on Dataset {dataset_id+1}") as pbar:
             for step in pbar:
                 net.train()
-                outputs = net(x_tensor)
-                loss = criterion(outputs, y_tensor)
+
                 if "adam" in name:
-                    def closure():
-                        loss.backward()
-                        return loss                
+                  optimizer.zero_grad()
+                  outputs = net(x_tensor)
+                  loss = criterion(outputs, y_tensor)
+                  loss.backward()
+                  optimizer.step()         
                 else:
+                    outputs = net(x_tensor)
+                    loss = criterion(outputs, y_tensor)                  
                     def closure():
                         return loss
-                loss = optimizer.step(closure)
+                    loss = optimizer.step(closure)
 
                 if step % interval == 0:
                     losses.append(loss.item())
                 pbar.set_postfix({"loss": loss.item()})
+                if not "adam" in name:
+                  optimizer.lr_params *= (0.8) ** (1 / (steps-1))
+                  optimizer.lr_preconditioner *= (0.8) ** (1 / (steps-1))                
         end_time.record()
         cuda.synchronize()
         step_times[name].append(start_time.elapsed_time(end_time) / steps)
         memory_usage[name].append(torch.cuda.max_memory_allocated() / 1024 / 1024)  # Convert to MB
         loss_history[name].append(losses)
+
 
 # Save the data to a file
 data = {
